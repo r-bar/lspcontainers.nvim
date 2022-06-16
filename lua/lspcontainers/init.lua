@@ -17,6 +17,7 @@ local lspconfig_keys = {
   on_new_config = true,
   on_attach = true,
   commands = true,
+  settings = true,
 }
 
 
@@ -120,7 +121,7 @@ local supported_servers = {
 
 
 -- default command to run the lsp container
-function LspContainersConfig.default_cmd(runtime, workdir, image, network, docker_volume)
+function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docker_volume)
   if vim.fn.has("win32") then
     workdir = Dos2UnixSafePath(workdir)
   end
@@ -168,7 +169,7 @@ local function configure(server, user_opts)
     cmd = opts.cmd_builder(opts.container_runtime, opts.root_dir, opts.image, opts.network, opts.docker_volume),
   }
 
-  for name, value in pairs(user_opts) do
+  for name, value in pairs(opts) do
     if lspconfig_keys[name] then
       config[name] = value
     end
@@ -248,6 +249,7 @@ local function _image_list()
   return imglist
 end
 
+
 -- pull images specified by ensure_installed
 local function images_pull()
   local jobs = {}
@@ -260,6 +262,7 @@ local function images_pull()
 
   print("lspcontainers: Language servers successfully pulled")
 end
+
 
 local function images_remove()
   local jobs = {}
@@ -274,10 +277,12 @@ local function images_remove()
   print("lspcontainers: All language servers removed")
 end
 
+
 vim.cmd [[
   command -nargs=0 LspImagesPull lua require'lspcontainers'.images_pull()
   command -nargs=0 LspImagesRemove lua require'lspcontainers'.images_remove()
 ]]
+
 
 -- set global options for lspcontainers
 local function setup(options)
@@ -285,6 +290,7 @@ local function setup(options)
     LspContainersConfig[key] = val
   end
 end
+
 
 return {
   command = command,
