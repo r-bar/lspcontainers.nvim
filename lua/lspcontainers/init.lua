@@ -1,8 +1,26 @@
-Config = {
-  ensure_installed = {}
+local LspContainersConfig = {
+  -- 'configured', 'all', or a list of server names
+  ensure_installed = 'configured',
+  container_runtime = "docker",
+  root_dir = vim.fn.getcwd(),
+  network = "none",
+  docker_volume = nil,
+  -- table of server names and their configuration, built when "command()" is
+  -- called
+  configured_servers = {},
 }
 
-local supported_languages = {
+local lspconfig_keys = {
+  cmd = true,
+  root_dir = true,
+  filetypes = true,
+  on_new_config = true,
+  on_attach = true,
+  commands = true,
+}
+
+
+local supported_servers = {
   bashls = { image = "docker.io/lspcontainers/bash-language-server" },
   clangd = { image = "docker.io/lspcontainers/clangd-language-server" },
   dockerls = { image = "docker.io/lspcontainers/docker-language-server" },
@@ -50,7 +68,45 @@ local supported_languages = {
   omnisharp = { image = "docker.io/lspcontainers/omnisharp" },
   powershell_es = { image = "docker.io/lspcontainers/powershell-language-server" },
   prismals = { image = "docker.io/lspcontainers/prisma-language-server" },
-  pylsp = { image = "docker.io/lspcontainers/python-lsp-server" },
+  pylsp = {
+    image = "registry.barth.tech/library/pylsp:latest",
+    cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
+      local pylsp_config = require('lspconfig/server_configurations/pylsp').default_config
+      local lspconfig_utils = require 'lspconfig.util'
+      local bufnr = vim.api.nvim_get_current_buf()
+      local bufname = vim.api.nvim_buf_get_name(bufnr)
+
+      -- get a sane working directory to mount if one is not set
+      -- first branch implementation adapted from:
+      -- https://github.com/neovim/nvim-lspconfig/blob/84252b08b7f9831b0b1329f2a90ff51dd873e58f/lua/lspconfig/configs.lua#L80-L88
+      if workdir == nil and lspconfig_utils.bufname_valid(bufname) then
+        workdir = pylsp_config.root_dir(lspconfig_utils.path.sanitize(bufname))
+      end
+
+      -- fallback to using the editor's working directory to determine the root
+      -- path
+      if workdir == nil then
+        local cwd = vim.fn.getcwd()
+        workdir = pylsp_config.root_dir(cwd) or cwd
+      end
+
+      if additional_arguments == nil then
+        additional_arguments = {}
+      end
+
+      local container_options = {'--interactive', '--rm', '--volume', workdir..':'..workdir, '--workdir', workdir}
+      if vim.env.VIRTUAL_ENV then
+        vim.list_extend(container_options, {'--volume', vim.env.VIRTUAL_ENV .. ':/venv'})
+      end
+
+      local cmd = {runtime, 'container', 'run'}
+      vim.list_extend(cmd, container_options)
+      table.insert(cmd, image)
+      vim.list_extend(cmd, additional_arguments)
+
+      return cmd
+    end,
+  },
   pyright = { image = "docker.io/lspcontainers/pyright-langserver" },
   rust_analyzer = { image = "docker.io/lspcontainers/rust-analyzer" },
   solargraph = { image = "docker.io/lspcontainers/solargraph" },
@@ -62,15 +118,16 @@ local supported_languages = {
   yamlls = { image = "docker.io/lspcontainers/yaml-language-server" },
 }
 
+
 -- default command to run the lsp container
-local default_cmd = function (runtime, workdir, image, network, docker_volume)
+function LspContainersConfig.default_cmd(runtime, workdir, image, network, docker_volume)
   if vim.fn.has("win32") then
     workdir = Dos2UnixSafePath(workdir)
   end
 
   local mnt_volume
   if docker_volume ~= nil then
-    mnt_volume ="--volume="..docker_volume..":"..workdir..":z"
+    mnt_volume = "--volume="..docker_volume..":"..workdir..":z"
   else
     mnt_volume = "--volume="..workdir..":"..workdir..":z"
   end
@@ -88,19 +145,13 @@ local default_cmd = function (runtime, workdir, image, network, docker_volume)
   }
 end
 
-local function command(server, user_opts)
-  -- Start out with the default values:
-  local opts =  {
-    container_runtime = "docker",
-    root_dir = vim.fn.getcwd(),
-    cmd_builder = default_cmd,
-    network = "none",
-    docker_volume = nil,
-  }
+
+local function configure(server, user_opts)
+  local opts = vim.tbl_extend("force", {}, LspContainersConfig)
 
   -- If the LSP is known, it override the defaults:
-  if supported_languages[server] ~= nil then
-    opts = vim.tbl_extend("force", opts, supported_languages[server])
+  if supported_servers[server] ~= nil then
+    opts = vim.tbl_extend("force", opts, supported_servers[server])
   end
 
   -- If any opts were passed, those override the defaults:
@@ -113,8 +164,25 @@ local function command(server, user_opts)
     return 1
   end
 
-  return opts.cmd_builder(opts.container_runtime, opts.root_dir, opts.image, opts.network, opts.docker_volume)
+  local config = {
+    cmd = opts.cmd_builder(opts.container_runtime, opts.root_dir, opts.image, opts.network, opts.docker_volume),
+  }
+
+  for name, value in pairs(user_opts) do
+    if lspconfig_keys[name] then
+      config[name] = value
+    end
+  end
+
+  LspContainersConfig.configured_servers[server] = config
+  return config
 end
+
+
+local function command(server, user_opts)
+  return configure(server, user_opts).cmd
+end
+
 
 Dos2UnixSafePath = function(workdir)
   workdir = string.gsub(workdir, ":", "")
@@ -123,6 +191,8 @@ Dos2UnixSafePath = function(workdir)
   return workdir
 end
 
+
+-- callback for job event handlers
 local function on_event(_, data, event)
   --if event == "stdout" or event == "stderr" then
   if event == "stdout" then
@@ -134,24 +204,56 @@ local function on_event(_, data, event)
   end
 end
 
-local function images_pull(runtime)
+-- dispatch commands with the configured container runtime
+local function runtime(arguments)
+  if type(arguments) ~= 'string' then
+    error('runtime arguments must be given as a string')
+  end
+
+  return vim.fn.jobstart(
+    LspContainersConfig.runtime .. " " .. arguments,
+    {
+      on_stderr = on_event,
+      on_stdout = on_event,
+      on_exit = on_event,
+    }
+  )
+end
+
+
+-- used for LspImagesPull and LspImagesRemove
+local function _image_list()
+  local images = {}
+  if type(LspContainersConfig.ensure_installed) == 'table' then
+    return LspContainersConfig.ensure_installed
+  end
+
+  -- add configured servers, returned for both 'all' and 'configured' values
+  for server_name, server_config in pairs(LspContainersConfig.configured_servers) do
+    images[server_name] = server_config.image
+  end
+
+  if LspContainersConfig.configured_servers == 'all' then
+    for server_name, server_config in pairs(supported_servers) do
+      if images[server_name] ~= nil then
+        images[server_name] = server_config.image
+      end
+    end
+  end
+
+  local imglist = {}
+  for _, image in pairs(images) do
+    imglist[#imglist + 1] = image
+  end
+  return imglist
+end
+
+-- pull images specified by ensure_installed
+local function images_pull()
   local jobs = {}
-  runtime = runtime or "docker"
 
-  for idx, server_name in ipairs(Config.ensure_installed) do
-    local server = supported_languages[server_name]
-
-    local job_id =
-      vim.fn.jobstart(
-      runtime.." image pull "..server['image'],
-      {
-        on_stderr = on_event,
-        on_stdout = on_event,
-        on_exit = on_event,
-      }
-    )
-
-    table.insert(jobs, idx, job_id)
+  for i, image in ipairs(_image_list()) do
+    jobs[i] = runtime("image pull "..image)
   end
 
   local _ = vim.fn.jobwait(jobs)
@@ -162,18 +264,9 @@ end
 local function images_remove()
   local jobs = {}
 
-  for _, v in pairs(supported_languages) do
-    local job =
-      vim.fn.jobstart(
-      "docker image rm --force "..v['image']..":latest",
-      {
-        on_stderr = on_event,
-        on_stdout = on_event,
-        on_exit = on_event,
-      }
-    )
-
-    table.insert(jobs, job)
+  -- TODO: detect old versions from docker image list
+  for _, image in ipairs(_image_list()) do
+    table.insert(jobs, #jobs + 1, runtime("image rm --force "..image))
   end
 
   local _ = vim.fn.jobwait(jobs)
@@ -186,16 +279,18 @@ vim.cmd [[
   command -nargs=0 LspImagesRemove lua require'lspcontainers'.images_remove()
 ]]
 
+-- set global options for lspcontainers
 local function setup(options)
-  if options['ensure_installed'] then
-    Config.ensure_installed = options['ensure_installed']
+  for key, val in pairs(options) do
+    LspContainersConfig[key] = val
   end
 end
 
 return {
   command = command,
+  configure = configure,
   images_pull = images_pull,
   images_remove = images_remove,
   setup = setup,
-  supported_languages = supported_languages
+  supported_servers = supported_servers
 }
