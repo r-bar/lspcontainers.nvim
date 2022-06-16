@@ -25,8 +25,21 @@ local supported_servers = {
   bashls = { image = "docker.io/lspcontainers/bash-language-server" },
   clangd = { image = "docker.io/lspcontainers/clangd-language-server" },
   dockerls = { image = "docker.io/lspcontainers/docker-language-server" },
+  eslint = {
+    image = 'registry.barth.tech/library/vscode-langservers:latest',
+    cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
+      local base_config = require 'lspconfig.server_configurations.eslint'
+      local base_cmd = base_config.default_config.cmd
+      additional_arguments = additional_arguments or {}
+
+      local cmd = {runtime, 'run', '--rm', '-i', '-v', workdir..':'..workdir, '-w', workdir, image}
+      vim.list_extend(cmd, base_cmd)
+      vim.list_extend(cmd, additional_arguments)
+      return cmd
+    end,
+  },
   gopls = {
-    cmd_builder = function (runtime, workdir, image, network)
+    cmd_builder = function (runtime, workdir, image, network, docker_volume, additional_arguments)
       local volume = workdir..":"..workdir..":z"
       local env = vim.api.nvim_eval('environ()')
       local gopath = env.GOPATH or env.HOME.."/go"
@@ -43,7 +56,7 @@ local supported_servers = {
 
       local user = user_id..":"..group_id
 
-      return {
+      local cmd = {
         runtime,
         "container",
         "run",
@@ -58,6 +71,8 @@ local supported_servers = {
         "--user="..user,
         image
       }
+      vim.list_extend(cmd, additional_arguments)
+      return cmd
     end,
     image = "docker.io/lspcontainers/gopls",
     network="bridge",
@@ -121,7 +136,8 @@ local supported_servers = {
 
 
 -- default command to run the lsp container
-function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docker_volume)
+function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docker_volume, additional_arguments)
+  additional_arguments = additional_arguments or {}
   if vim.fn.has("win32") then
     workdir = Dos2UnixSafePath(workdir)
   end
@@ -133,7 +149,7 @@ function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docke
     mnt_volume = "--volume="..workdir..":"..workdir..":z"
   end
 
-  return {
+  local cmd = {
     runtime,
     "container",
     "run",
@@ -144,6 +160,8 @@ function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docke
     mnt_volume,
     image
   }
+  vim.list_extend(cmd, additional_arguments)
+  return cmd
 end
 
 
