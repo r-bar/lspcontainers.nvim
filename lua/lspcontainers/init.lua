@@ -40,6 +40,7 @@ local supported_servers = {
   },
   gopls = {
     cmd_builder = function (runtime, workdir, image, network, docker_volume, additional_arguments)
+      additional_arguments = additional_arguments or {}
       local volume = workdir..":"..workdir..":z"
       local env = vim.api.nvim_eval('environ()')
       local gopath = env.GOPATH or env.HOME.."/go"
