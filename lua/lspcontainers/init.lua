@@ -65,6 +65,7 @@ local supported_servers = {
   html = { image = "docker.io/lspcontainers/html-language-server" },
   intelephense = { image = "docker.io/lspcontainers/intelephense" },
   jsonls = { image = "docker.io/lspcontainers/json-language-server" },
+  jsonnet_ls = { image = "registry.barth.tech/library/jsonnet-language-server" },
   omnisharp = { image = "docker.io/lspcontainers/omnisharp" },
   powershell_es = { image = "docker.io/lspcontainers/powershell-language-server" },
   prismals = { image = "docker.io/lspcontainers/prisma-language-server" },
