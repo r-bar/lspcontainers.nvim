@@ -28,16 +28,16 @@ local supported_servers = {
   dockerls = { image = "docker.io/lspcontainers/docker-language-server" },
   eslint = {
     image = 'registry.barth.tech/library/vscode-langservers:latest',
-    cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
-      local base_config = require 'lspconfig.server_configurations.eslint'
-      local base_cmd = base_config.default_config.cmd
-      additional_arguments = additional_arguments or {}
+    --cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
+    --  local base_config = require 'lspconfig.server_configurations.eslint'
+    --  local base_cmd = base_config.default_config.cmd
+    --  additional_arguments = additional_arguments or {}
 
-      local cmd = {runtime, 'run', '--rm', '-i', '-v', workdir..':'..workdir, '-w', workdir, image}
-      vim.list_extend(cmd, base_cmd)
-      vim.list_extend(cmd, additional_arguments)
-      return cmd
-    end,
+    --  local cmd = {runtime, 'run', '--rm', '-i', '-v', workdir..':'..workdir, '-w', workdir, image}
+    --  vim.list_extend(cmd, base_cmd)
+    --  vim.list_extend(cmd, additional_arguments)
+    --  return cmd
+    --end,
   },
   gopls = {
     cmd_builder = function (runtime, workdir, image, network, docker_volume, additional_arguments)
