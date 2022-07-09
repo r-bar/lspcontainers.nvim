@@ -24,6 +24,7 @@ local lspconfig_keys = {
 local supported_servers = {
   bashls = { image = "docker.io/lspcontainers/bash-language-server" },
   clangd = { image = "docker.io/lspcontainers/clangd-language-server" },
+  cssls = { image = "registry.barth.tech/library/vscode-langservers" },
   dockerls = { image = "docker.io/lspcontainers/docker-language-server" },
   eslint = {
     image = 'registry.barth.tech/library/vscode-langservers:latest',
