@@ -21,28 +21,46 @@ local lspconfig_keys = {
 }
 
 
+local function merge_opts(opts)
+  local merged = vim.tbl_extend('force', LspContainersConfig, opts)
+
+  -- the below options cannot be derived from the union of opts and
+  -- LspContainersConfig because they depend on runtime conditions
+  merged.args = opts.args or {}
+
+  if opts.workdir == nil then
+    merged.workdir = merged.root_dir
+  end
+
+  if vim.fn.has("win32") then
+    merged.workdir = Dos2UnixSafePath(merged.workdir)
+  else
+    merged.workdir = opts.workdir
+  end
+
+  return merged
+end
+
+
 local supported_servers = {
   bashls = { image = "docker.io/lspcontainers/bash-language-server" },
   clangd = { image = "docker.io/lspcontainers/clangd-language-server" },
-  cssls = { image = "registry.barth.tech/library/vscode-langservers" },
+  cssls = {
+    image = "registry.barth.tech/library/vscode-langservers",
+    args = {"vscode-css-language-server", "--stdio"},
+  },
   dockerls = { image = "docker.io/lspcontainers/docker-language-server" },
   eslint = {
     image = 'registry.barth.tech/library/vscode-langservers:latest',
-    --cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
-    --  local base_config = require 'lspconfig.server_configurations.eslint'
-    --  local base_cmd = base_config.default_config.cmd
-    --  additional_arguments = additional_arguments or {}
-
-    --  local cmd = {runtime, 'run', '--rm', '-i', '-v', workdir..':'..workdir, '-w', workdir, image}
-    --  vim.list_extend(cmd, base_cmd)
-    --  vim.list_extend(cmd, additional_arguments)
-    --  return cmd
-    --end,
+    args = {'vscode-eslint-language-server', '--stdio'},
   },
   gopls = {
-    cmd_builder = function (runtime, workdir, image, network, docker_volume, additional_arguments)
-      additional_arguments = additional_arguments or {}
-      local volume = workdir..":"..workdir..":z"
+    image = "docker.io/lspcontainers/gopls",
+    network="bridge",
+    cmd_builder = function (opts)
+      local opts = merge_opts(opts)
+      local args = opts.args or {}
+      local volume = opts.workdir..":"..opts.workdir..":z"
       local env = vim.api.nvim_eval('environ()')
       local gopath = env.GOPATH or env.HOME.."/go"
       local gopath_volume = gopath..":"..gopath..":z"
@@ -59,25 +77,23 @@ local supported_servers = {
       local user = user_id..":"..group_id
 
       local cmd = {
-        runtime,
+        opts.container_runtime,
         "container",
         "run",
         "--env",
         "GOPATH="..gopath,
         "--interactive",
-        "--network="..network,
+        "--network="..opts.network,
         "--rm",
-        "--workdir="..workdir,
+        "--workdir="..opts.workdir,
         "--volume="..volume,
         "--volume="..gopath_volume,
         "--user="..user,
-        image
+        opts.image
       }
-      vim.list_extend(cmd, additional_arguments)
+      vim.list_extend(cmd, args)
       return cmd
     end,
-    image = "docker.io/lspcontainers/gopls",
-    network="bridge",
   },
   graphql = { image = "docker.io/lspcontainers/graphql-language-service-cli" },
   html = { image = "docker.io/lspcontainers/html-language-server" },
@@ -89,7 +105,7 @@ local supported_servers = {
   prismals = { image = "docker.io/lspcontainers/prisma-language-server" },
   pylsp = {
     image = "registry.barth.tech/library/pylsp:latest",
-    cmd_builder = function(runtime, workdir, image, network, docker_volume, additional_arguments)
+    cmd_builder = function(opts)
       local pylsp_config = require('lspconfig/server_configurations/pylsp').default_config
       local lspconfig_utils = require 'lspconfig.util'
       local bufnr = vim.api.nvim_get_current_buf()
@@ -98,7 +114,8 @@ local supported_servers = {
       -- get a sane working directory to mount if one is not set
       -- first branch implementation adapted from:
       -- https://github.com/neovim/nvim-lspconfig/blob/84252b08b7f9831b0b1329f2a90ff51dd873e58f/lua/lspconfig/configs.lua#L80-L88
-      if workdir == nil and lspconfig_utils.bufname_valid(bufname) then
+      local workdir
+      if opts.workdir == nil and lspconfig_utils.bufname_valid(bufname) then
         workdir = pylsp_config.root_dir(lspconfig_utils.path.sanitize(bufname))
       end
 
@@ -109,8 +126,11 @@ local supported_servers = {
         workdir = pylsp_config.root_dir(cwd) or cwd
       end
 
-      if additional_arguments == nil then
-        additional_arguments = {}
+      local args
+      if opts.args == nil then
+        args = {}
+      else
+        args = opts.args
       end
 
       local container_options = {'--interactive', '--rm', '--volume', workdir..':'..workdir, '--workdir', workdir}
@@ -118,10 +138,10 @@ local supported_servers = {
         vim.list_extend(container_options, {'--volume', vim.env.VIRTUAL_ENV .. ':/venv'})
       end
 
-      local cmd = {runtime, 'container', 'run'}
+      local cmd = {opts.container_runtime, 'container', 'run'}
       vim.list_extend(cmd, container_options)
-      table.insert(cmd, image)
-      vim.list_extend(cmd, additional_arguments)
+      table.insert(cmd, opts.image)
+      vim.list_extend(cmd, args)
 
       return cmd
     end,
@@ -139,35 +159,34 @@ local supported_servers = {
 
 
 -- default command to run the lsp container
-function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docker_volume, additional_arguments)
-  additional_arguments = additional_arguments or {}
-  if vim.fn.has("win32") then
-    workdir = Dos2UnixSafePath(workdir)
-  end
+--function LspContainersConfig.cmd_builder(runtime, workdir, image, network, docker_volume, args)
+function LspContainersConfig.cmd_builder(opts)
+  local opts = merge_opts(opts)
 
   local mnt_volume
-  if docker_volume ~= nil then
-    mnt_volume = "--volume="..docker_volume..":"..workdir..":z"
+  if opts.docker_volume == nil then
+    mnt_volume = "--volume="..opts.workdir..":"..opts.workdir..":z"
   else
-    mnt_volume = "--volume="..workdir..":"..workdir..":z"
+    mnt_volume = "--volume="..opts.docker_volume..":"..opts.workdir..":z"
   end
 
   local cmd = {
-    runtime,
+    opts.container_runtime,
     "container",
     "run",
     "--interactive",
     "--rm",
-    "--network="..network,
-    "--workdir="..workdir,
+    "--network="..opts.network,
+    "--workdir="..opts.workdir,
     mnt_volume,
-    image
+    opts.image,
   }
-  vim.list_extend(cmd, additional_arguments)
+  vim.list_extend(cmd, opts.args)
   return cmd
 end
 
-
+-- Returns a table with options compatable with nvim-lspconfig for the given
+-- server. user_opts refers to opts for this container
 local function configure(server, user_opts)
   local opts = vim.tbl_extend("force", {}, LspContainersConfig)
 
@@ -187,7 +206,7 @@ local function configure(server, user_opts)
   end
 
   local config = {
-    cmd = opts.cmd_builder(opts.container_runtime, opts.root_dir, opts.image, opts.network, opts.docker_volume),
+    cmd = opts.cmd_builder(opts),
   }
 
   for name, value in pairs(opts) do
@@ -233,7 +252,7 @@ local function runtime(arguments)
   end
 
   return vim.fn.jobstart(
-    LspContainersConfig.runtime .. " " .. arguments,
+    LspContainersConfig.container_runtime .. " " .. arguments,
     {
       on_stderr = on_event,
       on_stdout = on_event,
