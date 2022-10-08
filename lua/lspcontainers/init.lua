@@ -32,7 +32,7 @@ local function merge_opts(opts)
     merged.workdir = merged.root_dir
   end
 
-  if vim.fn.has("win32") then
+  if vim.loop.os_uname().sysname == "Windows_NT" then
     merged.workdir = Dos2UnixSafePath(merged.workdir)
   else
     merged.workdir = opts.workdir
@@ -58,6 +58,7 @@ local supported_servers = {
     image = "docker.io/lspcontainers/gopls",
     network="bridge",
     cmd_builder = function (opts)
+      local network
       local opts = merge_opts(opts)
       local args = opts.args or {}
       local volume = opts.workdir..":"..opts.workdir..":z"
@@ -76,6 +77,14 @@ local supported_servers = {
 
       local user = user_id..":"..group_id
 
+      if opts.network then
+        network = opts.network
+      elseif opts.container_runtime == "docker" then
+      	network = "bridge"
+      elseif opts.container_runtime == "podman" then
+        network = "slirp4netns"
+      end
+
       local cmd = {
         opts.container_runtime,
         "container",
@@ -83,7 +92,7 @@ local supported_servers = {
         "--env",
         "GOPATH="..gopath,
         "--interactive",
-        "--network="..opts.network,
+        "--network="..network,
         "--rm",
         "--workdir="..opts.workdir,
         "--volume="..volume,
@@ -151,6 +160,7 @@ local supported_servers = {
   solargraph = { image = "docker.io/lspcontainers/solargraph" },
   sumneko_lua = { image = "docker.io/lspcontainers/lua-language-server" },
   svelte = { image = "docker.io/lspcontainers/svelte-language-server" },
+  tailwindcss= { image = "docker.io/lspcontainers/tailwindcss-language-server" },
   terraformls = { image = "docker.io/lspcontainers/terraform-ls" },
   tsserver = { image = "docker.io/lspcontainers/typescript-language-server" },
   vuels = { image = "docker.io/lspcontainers/vue-language-server" },
@@ -303,13 +313,22 @@ local function images_pull()
   print("lspcontainers: Language servers successfully pulled")
 end
 
-
-local function images_remove()
+local function images_remove(runtime)
   local jobs = {}
+  runtime = runtime or "docker"
 
-  -- TODO: detect old versions from docker image list
-  for _, image in ipairs(_image_list()) do
-    table.insert(jobs, #jobs + 1, runtime("image rm --force "..image))
+  for _, v in pairs(supported_languages) do
+    local job =
+      vim.fn.jobstart(
+      runtime.." image rm --force "..v['image']..":latest",
+      {
+        on_stderr = on_event,
+        on_stdout = on_event,
+        on_exit = on_event,
+      }
+    )
+
+    table.insert(jobs, job)
   end
 
   local _ = vim.fn.jobwait(jobs)
@@ -317,11 +336,8 @@ local function images_remove()
   print("lspcontainers: All language servers removed")
 end
 
-
-vim.cmd [[
-  command -nargs=0 LspImagesPull lua require'lspcontainers'.images_pull()
-  command -nargs=0 LspImagesRemove lua require'lspcontainers'.images_remove()
-]]
+vim.api.nvim_create_user_command("LspImagesPull", images_pull, {})
+vim.api.nvim_create_user_command("LspImagesRemove", images_remove, {})
 
 
 -- set global options for lspcontainers
