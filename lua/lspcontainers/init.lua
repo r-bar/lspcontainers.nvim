@@ -32,10 +32,12 @@ local function merge_opts(opts)
     merged.workdir = merged.root_dir
   end
 
+  if merged.workdir == nil then
+    merged.workdir = vim.fn.getcwd()
+  end
+
   if vim.loop.os_uname().sysname == "Windows_NT" then
     merged.workdir = Dos2UnixSafePath(merged.workdir)
-  else
-    merged.workdir = opts.workdir
   end
 
   return merged
