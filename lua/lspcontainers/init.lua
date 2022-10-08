@@ -104,7 +104,7 @@ local supported_servers = {
   powershell_es = { image = "docker.io/lspcontainers/powershell-language-server" },
   prismals = { image = "docker.io/lspcontainers/prisma-language-server" },
   pylsp = {
-    image = "registry.barth.tech/library/pylsp:latest",
+    image = "registry.barth.tech/library/pylsp:custom",
     cmd_builder = function(opts)
       local pylsp_config = require('lspconfig/server_configurations/pylsp').default_config
       local lspconfig_utils = require 'lspconfig.util'
